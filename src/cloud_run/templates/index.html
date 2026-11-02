@@ -259,8 +259,22 @@
   </section>
 
   <section id="view-projects" hidden>
-    <p class="hint">Every project the assistant knows about. It adds them from your chats and your answers; you can add and correct them too.</p>
+    <p class="hint">Cross-team project tracker: milestones, blockers, status, and what's waiting on Man.</p>
+    
+    <div id="waitingOnMan" style="margin-bottom: 16px"></div>
+    
     <div class="toolbar">
+      <select id="trackerStatusFilter" aria-label="Tracker status">
+        <option value="">Any tracker status</option>
+        <option value="on_track">On track</option>
+        <option value="at_risk">At risk</option>
+        <option value="blocked">Blocked</option>
+        <option value="done">Done</option>
+        <option value="unknown">Unknown</option>
+      </select>
+      <select id="projectOwnerFilter" aria-label="Owner">
+        <option value="">All owners</option>
+      </select>
       <select id="companyFilter" aria-label="Company">
         <option value="">Both companies</option>
         <option value="superhairpieces">Superhairpieces</option>
@@ -374,6 +388,7 @@
       <label>Status <select name="status"><option value="todo">To do</option><option value="in_progress">In progress</option><option value="done">Done</option></select></label>
       <label>Priority <select name="priority"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
     </div>
+    <label>Project <select name="project_id" id="taskProject"><option value="">None</option></select></label>
     <label class="check"><input type="checkbox" name="owner_is_me"> This is mine</label>
     <div id="taskSource" class="why"></div>
     <div id="taskResult" class="report" hidden></div>
@@ -398,9 +413,22 @@
       <label>Owner <input name="owner" maxlength="100"></label>
       <label>Deadline <input name="deadline" type="date"></label>
     </div>
+    <div class="row">
+      <label>Tracker status <select name="tracker_status"><option value="unknown">Unknown</option><option value="on_track">On track</option><option value="at_risk">At risk</option><option value="blocked">Blocked</option><option value="done">Done</option></select></label>
+      <label>Last update <input name="last_update_at" maxlength="30" placeholder="e.g. Nov 1, 3:00 PM EST"></label>
+    </div>
     <label>Goal <textarea name="goal" maxlength="2000"></textarea></label>
     <label>Where it stands <textarea name="summary" maxlength="2000"></textarea></label>
     <label>Next steps <textarea name="next_steps" maxlength="2000"></textarea></label>
+    <h4 style="margin:12px 0 6px">Milestones</h4>
+    <div id="projectMilestones"></div>
+    <button type="button" class="btn" id="addMilestone">+ Add milestone</button>
+    <h4 style="margin:12px 0 6px">Blockers</h4>
+    <div id="projectBlockers"></div>
+    <button type="button" class="btn" id="addBlocker">+ Add blocker</button>
+    <h4 style="margin:12px 0 6px">Waiting on Man</h4>
+    <label>What's needed <textarea name="waiting_needed" maxlength="500"></textarea></label>
+    <label>Since when <input name="waiting_since" maxlength="30" placeholder="e.g. Nov 1, 3:00 PM EST"></label>
     <div id="projectSource" class="why"></div>
     <div class="dialog-foot">
       <button type="button" class="btn danger left" id="deleteProject">Delete</button>

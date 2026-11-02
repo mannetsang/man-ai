@@ -61,6 +61,17 @@ secret_store = make_secrets()
 app.secret_key = store.session_key()
 knowledge.ensure_seeded(store)
 integrations.seed_systems(store)
+
+# One-time seed of tracker workstreams from uploaded JSON
+_tracker_seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "uploads", "tracker_seed_0f81.json")
+if os.path.exists(_tracker_seed_path):
+    try:
+        with open(_tracker_seed_path, encoding="utf-8") as f:
+            _tracker_seed = json.load(f)
+        knowledge.seed_tracker_workstreams(store, _tracker_seed)
+    except Exception:  # noqa: BLE001 - seed is best-effort
+        pass
+
 app.config.update(
     SESSION_COOKIE_SECURE=not LOCAL,
     SESSION_COOKIE_HTTPONLY=True,
@@ -231,7 +242,7 @@ def logout():
 
 # -- board API ---------------------------------------------------------------------
 
-TASK_FIELDS = {"title", "detail", "owner", "owner_is_me", "due", "priority", "status"}
+TASK_FIELDS = {"title", "detail", "owner", "owner_is_me", "due", "priority", "status", "project_id"}
 
 
 def _clean_task(body):
@@ -242,7 +253,7 @@ def _clean_task(body):
         fields.pop("status")
     if fields.get("priority") not in (None, "high", "medium", "low"):
         fields.pop("priority")
-    for k in ("detail", "owner", "due"):
+    for k in ("detail", "owner", "due", "project_id"):
         if k in fields:
             fields[k] = str(fields[k] or "")[:2000 if k == "detail" else 100]
     if "owner_is_me" in fields:
@@ -289,6 +300,7 @@ def api_create_task():
     now = utcnow_iso()
     task = store.save_task(pysecrets.token_hex(10), {
         "detail": "", "owner": "", "owner_is_me": True, "due": "", "priority": "medium", "status": "todo",
+        "project_id": "",
         **fields, "origin": "manual", "user_edited": True, "created_at": now, "updated_at": now,
     })
     return jsonify(task=task)
@@ -439,13 +451,24 @@ def api_add_question():
     return (jsonify(question=q), 200) if q else (jsonify(error="Type a question."), 400)
 
 
-PROJECT_FIELDS = ("name", "company", "goal", "owner", "status", "deadline", "summary", "next_steps")
+PROJECT_FIELDS = ("name", "company", "goal", "owner", "status", "deadline", "summary", "next_steps", 
+                  "tracker_status", "last_update_at")
 
 
 @app.post("/api/projects")
 def api_create_project():
     body = request.get_json(force=True) or {}
-    project = knowledge.save_project(store, {k: body.get(k) for k in PROJECT_FIELDS}, source="you")
+    fields = {k: body.get(k) for k in PROJECT_FIELDS}
+    
+    # Handle structured fields
+    if "milestones" in body and isinstance(body["milestones"], list):
+        fields["milestones"] = body["milestones"]
+    if "blockers" in body and isinstance(body["blockers"], list):
+        fields["blockers"] = body["blockers"]
+    if "waiting_on_man" in body and isinstance(body["waiting_on_man"], dict):
+        fields["waiting_on_man"] = body["waiting_on_man"]
+    
+    project = knowledge.save_project(store, fields, source="you")
     return (jsonify(project=project), 200) if project else (jsonify(error="A project needs a name."), 400)
 
 
@@ -455,6 +478,15 @@ def api_update_project(project_id):
         return jsonify(error="No such project."), 404
     body = request.get_json(force=True) or {}
     changes = {k: str(body[k])[:2000] for k in PROJECT_FIELDS if k in body}
+    
+    # Handle structured fields
+    if "milestones" in body and isinstance(body["milestones"], list):
+        changes["milestones"] = body["milestones"]
+    if "blockers" in body and isinstance(body["blockers"], list):
+        changes["blockers"] = body["blockers"]
+    if "waiting_on_man" in body and isinstance(body["waiting_on_man"], dict):
+        changes["waiting_on_man"] = body["waiting_on_man"]
+    
     return jsonify(project=store.save_item("projects", project_id, {**changes, "updated_at": utcnow_iso()}))
 
 

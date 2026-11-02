@@ -131,6 +131,72 @@ def ensure_seeded(store):
     store.set_flag("seeded_v1", now)
 
 
+def seed_tracker_workstreams(store, tracker_data):
+    """One-time load of tracker workstreams from tracker_seed.json. Idempotent: won't overwrite existing projects."""
+    if store.get_flag("tracker_seeded"):
+        return 0
+    
+    count = 0
+    now = utcnow_iso()
+    for ws in tracker_data.get("workstreams", []):
+        name = ws.get("name", "").strip()
+        if not name:
+            continue
+        
+        # Check if a project with this exact name already exists
+        if find_project(store, name):
+            continue
+        
+        # Parse tracker status
+        status_map = {
+            "On track": "on_track",
+            "At risk": "at_risk",
+            "Blocked": "blocked",
+            "Done": "done",
+            "Unknown": "unknown"
+        }
+        tracker_status = status_map.get(ws.get("status"), "unknown")
+        
+        # Build waiting_on_man structure
+        waiting_on_man = {}
+        waiting_text = ws.get("waiting_on_man", "")
+        if waiting_text and not waiting_text.startswith("None"):
+            waiting_on_man = {"needed": waiting_text[:500], "since": ws.get("last_update_at", now)}
+        
+        # Extract milestone from next_milestone if present
+        milestones = []
+        if ws.get("next_milestone"):
+            milestones.append({
+                "title": ws["next_milestone"][:200],
+                "due": "",
+                "done": False
+            })
+        
+        project = {
+            "name": name,
+            "owner": ws.get("owner", "")[:100],
+            "status": "active" if tracker_status not in ("done",) else "done",
+            "tracker_status": tracker_status,
+            "summary": "",
+            "next_steps": ws.get("next_milestone", "")[:2000],
+            "milestones": milestones,
+            "blockers": [],
+            "waiting_on_man": waiting_on_man,
+            "last_update_at": ws.get("last_update_at", "")[:30],
+            "company": "superhairpieces",
+            "goal": "",
+            "deadline": "",
+            "spaces": []
+        }
+        
+        saved = save_project(store, project, source="tracker_seed")
+        if saved:
+            count += 1
+    
+    store.set_flag("tracker_seeded", now)
+    return count
+
+
 def add_fact(store, text, topic="general", project_id="", source=""):
     text = (text or "").strip()
     if not text:
@@ -177,14 +243,29 @@ def save_project(store, fields, source=""):
     now = utcnow_iso()
     clean = {k: (str(v)[:2000] if isinstance(v, str) else v) for k, v in fields.items()
              if k in ("name", "company", "goal", "owner", "status", "deadline", "summary", "next_steps") and v not in (None, "")}
+    
+    # Tracker fields: milestones (list), blockers (list), waiting_on_man (dict), tracker_status, last_update_at
+    if "milestones" in fields and isinstance(fields["milestones"], list):
+        clean["milestones"] = fields["milestones"]
+    if "blockers" in fields and isinstance(fields["blockers"], list):
+        clean["blockers"] = fields["blockers"]
+    if "waiting_on_man" in fields and isinstance(fields["waiting_on_man"], dict):
+        clean["waiting_on_man"] = fields["waiting_on_man"]
+    if "tracker_status" in fields and fields["tracker_status"] in ("on_track", "at_risk", "blocked", "done", "unknown"):
+        clean["tracker_status"] = fields["tracker_status"]
+    if "last_update_at" in fields:
+        clean["last_update_at"] = str(fields["last_update_at"])[:30]
+    
     if existing:
         return store.save_item("projects", existing["id"], {**clean, "updated_at": now})
     if not clean.get("name"):
         return None
     pid = slug(clean["name"], "p-")
     return store.save_item("projects", pid, {"company": "", "goal": "", "owner": "", "status": "active", "deadline": "",
-                                             "summary": "", "next_steps": "", "spaces": [], **clean,
-                                             "source": source[:120], "created_at": now, "updated_at": now})
+                                             "summary": "", "next_steps": "", "spaces": [], 
+                                             "milestones": [], "blockers": [], "waiting_on_man": {}, 
+                                             "tracker_status": "unknown", "last_update_at": "",
+                                             **clean, "source": source[:120], "created_at": now, "updated_at": now})
 
 
 def brief(store, settings=None, facts_limit=60, compact=False):

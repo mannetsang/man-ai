@@ -5,6 +5,10 @@ new messages in every space, group chat and DM Manne is in, keeps a project
 board current, and acts on Manne's behalf: it replies in Chat and adds
 calendar events.
 
+The app includes a **cross-team project tracker** with milestones, blockers, 
+tracker status (on track / at risk / blocked / done), items waiting on Man, and 
+a "Waiting on Man" section that surfaces projects, questions, and suggested actions.
+
 ```
 Cloud Scheduler (hourly) ──POST /run──►  Cloud Run: chat-assistant (Flask)
                                           │  as Manne (OAuth token in Secret Manager)
@@ -14,6 +18,8 @@ Cloud Scheduler (hourly) ──POST /run──►  Cloud Run: chat-assistant (Fl
                                           ├─ Vertex AI Gemini: tasks + actions per conversation
                                           └─ Firestore: board, activity, runs, watermarks
 Browser ──Google sign-in (Manne only)──►  board · activity · pause switch · run now
+                                          └─ Projects tab: tracker with milestones, blockers, 
+                                                          waiting-on-Man section
 ```
 
 ## What it does each run
@@ -115,6 +121,25 @@ no network or credentials:
 python -m unittest discover -s tests
 ```
 
+The new tracker tests are in `tests/test_tracker.py` and cover the data model,
+seeding, and backward compatibility.
+
 `STORE_BACKEND=memory python src/cloud_run/main.py` runs the
 app locally against the in-memory store (sign-in still needs a real OAuth
 client).
+
+## Project tracker data model
+
+Projects now support:
+- **milestones**: list of `{title, due, done}` objects
+- **blockers**: list of `{what, blocked_by, since}` objects
+- **waiting_on_man**: dict with `{needed, since}` for items waiting on Man
+- **tracker_status**: "on_track", "at_risk", "blocked", "done", or "unknown"
+- **last_update_at**: free-text timestamp of the last project update
+
+Tasks can be linked to projects via `project_id`. The Projects tab shows:
+- A "Waiting on Man" section at the top (projects with `waiting_on_man` set, plus open questions and pending actions)
+- Warning flags for overdue milestones (⚠ Overdue), stale updates (⚠ Stale, >7 days), and blockers (🚫)
+- Filters by tracker status, owner, company, and project status
+
+The one-time seed from `uploads/tracker_seed.json` is idempotent and runs on app startup.
