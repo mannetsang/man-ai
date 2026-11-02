@@ -48,6 +48,7 @@ USER_TOKEN_SECRET_ID = os.environ.get("USER_TOKEN_SECRET_ID", "chat-assistant-us
 CHATGPT_VOICE = os.environ.get("CHATGPT_VOICE", "realtime")  # realtime (ChatGPT hears you) | relay (via Gemini)
 CLAUDE_VOICE = os.environ.get("CLAUDE_VOICE", "realtime")  # realtime (ChatGPT's voice line) | gemini (Gemini's)
 RUN_TOKEN_SECRET_ID = os.environ.get("RUN_TOKEN_SECRET_ID", "chat-assistant-run-token")
+BOT_API_KEY_SECRET_ID = os.environ.get("BOT_API_KEY_SECRET_ID", "chat-assistant-bot-api-key")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 CSRF_HEADER = "X-Chat-Assistant"
 LOCAL = os.environ.get("STORE_BACKEND") == "memory"
@@ -58,6 +59,32 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 store = make_store()
 secret_store = make_secrets()
+app.secret_key = store.session_key()
+
+# Bot API key (loaded from Secret Manager, cached)
+_bot_api_key_cache = {"key": None, "checked_at": None}
+
+
+def bot_api_key():
+    """Load the bot API key from Secret Manager (cached, never logged)."""
+    import time
+    now = time.time()
+    # Refresh every 5 minutes or on miss
+    if _bot_api_key_cache["key"] and _bot_api_key_cache["checked_at"] and (now - _bot_api_key_cache["checked_at"]) < 300:
+        return _bot_api_key_cache["key"]
+    
+    try:
+        key = secret_store.get(BOT_API_KEY_SECRET_ID)
+        if key:
+            _bot_api_key_cache["key"] = key.strip()
+            _bot_api_key_cache["checked_at"] = now
+            return _bot_api_key_cache["key"]
+    except Exception:  # noqa: BLE001 - missing secret disables bot auth, never breaks startup
+        pass
+    
+    _bot_api_key_cache["key"] = None
+    _bot_api_key_cache["checked_at"] = now
+    return None
 app.secret_key = store.session_key()
 knowledge.ensure_seeded(store)
 integrations.seed_systems(store)
@@ -99,6 +126,56 @@ app.config["MAKE_LLM"] = make_llm
 
 # -- access control ----------------------------------------------------------------
 
+# Bot-allowlisted routes (path, methods)
+BOT_ALLOWED_ROUTES = {
+    "/api/projects": {"GET", "POST"},
+    "/api/projects/answers": {"GET"},
+}
+
+# Routes where bot can access with path parameter
+BOT_ALLOWED_ROUTE_PREFIXES = {
+    "/api/projects/": {"GET", "PATCH"},  # /api/projects/<id>
+    "/api/tasks": {"POST", "PATCH"},  # Limited to project linking
+}
+
+
+def is_bot_request():
+    """Check if request has valid bot API key in Authorization header."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    
+    token = auth[7:].strip()  # Remove "Bearer " prefix
+    key = bot_api_key()
+    
+    if not key or not token:
+        return False
+    
+    # Constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(token, key)
+
+
+def is_bot_allowed():
+    """Check if current route/method is allowed for bot access."""
+    path = request.path
+    method = request.method
+    
+    # Exact match
+    if path in BOT_ALLOWED_ROUTES:
+        return method in BOT_ALLOWED_ROUTES[path]
+    
+    # Prefix match
+    for prefix, methods in BOT_ALLOWED_ROUTE_PREFIXES.items():
+        if path.startswith(prefix) and method in methods:
+            # Special handling for tasks - only allow if linking to project
+            if prefix == "/api/tasks":
+                # We'll validate project_id in the actual endpoint
+                return True
+            return True
+    
+    return False
+
+
 def signed_in():
     return session.get("email") == OWNER_EMAIL
 
@@ -106,11 +183,31 @@ def signed_in():
 @app.before_request
 def guard():
     if request.path.startswith("/api/"):
+        # Check if Authorization header is present
+        auth_header = request.headers.get("Authorization", "")
+        
+        # If Authorization header is present, treat as bot auth attempt
+        if auth_header.startswith("Bearer "):
+            if not is_bot_request():
+                # Invalid bot key
+                return jsonify(error="Invalid API key."), 401
+            if not is_bot_allowed():
+                # Valid key but not allowed for this route
+                return jsonify(error="Bot access not allowed for this endpoint."), 403
+            # Valid bot request on allowed route
+            request.is_bot = True
+            request.bot_actor = "bot:jules"
+            return None
+        
+        # No Authorization header - regular session authentication
         if not signed_in():
             return jsonify(error="Sign in first."), 401
         # CSRF: browsers can't add a custom header cross-site without a CORS preflight we never allow.
         if request.method != "GET" and request.headers.get(CSRF_HEADER) != "1":
             return jsonify(error="Missing request header."), 403
+        
+        request.is_bot = False
+        request.bot_actor = None
 
 
 @app.after_request
@@ -294,15 +391,43 @@ def scopes_missing_from(token_json):
 
 @app.post("/api/tasks")
 def api_create_task():
-    fields = _clean_task(request.get_json(force=True) or {})
+    body = request.get_json(force=True) or {}
+    
+    # Validate request size
+    if len(json.dumps(body)) > 50000:  # 50KB limit
+        return jsonify(error="Request too large."), 413
+    
+    is_bot = getattr(request, "is_bot", False)
+    
+    # Bot can only create tasks with project_id
+    if is_bot and not body.get("project_id"):
+        return jsonify(error="Bot can only create tasks linked to projects."), 400
+    
+    fields = _clean_task(body)
     if not fields.get("title"):
         return jsonify(error="A task needs a title."), 400
+    
     now = utcnow_iso()
+    origin = "bot_api" if is_bot else "manual"
     task = store.save_task(pysecrets.token_hex(10), {
         "detail": "", "owner": "", "owner_is_me": True, "due": "", "priority": "medium", "status": "todo",
         "project_id": "",
-        **fields, "origin": "manual", "user_edited": True, "created_at": now, "updated_at": now,
+        **fields, "origin": origin, "user_edited": True, "created_at": now, "updated_at": now,
     })
+    
+    if is_bot:
+        # Record bot activity
+        store.save_action(pysecrets.token_hex(10), {
+            "type": "bot_create_task",
+            "status": "done",
+            "actor": request.bot_actor,
+            "task_id": task["id"],
+            "task_title": task.get("title", "")[:200],
+            "project_id": task.get("project_id", ""),
+            "created_at": now,
+            "executed_at": now
+        })
+    
     return jsonify(task=task)
 
 
@@ -325,9 +450,36 @@ def api_work_task(task_id):
 def api_update_task(task_id):
     if not store.get_task(task_id):
         return jsonify(error="No such task."), 404
-    fields = _clean_task(request.get_json(force=True) or {})
-    if "title" in fields and not fields["title"]:
-        return jsonify(error="A task needs a title."), 400
+    
+    body = request.get_json(force=True) or {}
+    
+    # Validate request size
+    if len(json.dumps(body)) > 50000:  # 50KB limit
+        return jsonify(error="Request too large."), 413
+    
+    is_bot = getattr(request, "is_bot", False)
+    
+    # Bot can only update project_id field
+    if is_bot:
+        if "project_id" not in body:
+            return jsonify(error="Bot can only update task project_id."), 400
+        fields = {"project_id": body.get("project_id", "")}
+        
+        # Record bot activity
+        store.save_action(pysecrets.token_hex(10), {
+            "type": "bot_update_task",
+            "status": "done",
+            "actor": request.bot_actor,
+            "task_id": task_id,
+            "project_id": fields.get("project_id", ""),
+            "created_at": utcnow_iso(),
+            "executed_at": utcnow_iso()
+        })
+    else:
+        fields = _clean_task(body)
+        if "title" in fields and not fields["title"]:
+            return jsonify(error="A task needs a title."), 400
+    
     task = store.save_task(task_id, {**fields, "user_edited": True, "updated_at": utcnow_iso()})
     return jsonify(task=task)
 
@@ -454,10 +606,35 @@ def api_add_question():
 PROJECT_FIELDS = ("name", "company", "goal", "owner", "status", "deadline", "summary", "next_steps", 
                   "tracker_status", "last_update_at")
 
+# Tracker fields that bots can update
+BOT_ALLOWED_PROJECT_FIELDS = {"milestones", "blockers", "waiting_on_man", "tracker_status", 
+                               "last_update_at", "next_steps", "owner", "status", "summary"}
+
+
+@app.get("/api/projects")
+def api_list_projects():
+    """List all projects (for bot API)."""
+    projects = store.list_items("projects")
+    return jsonify(projects=projects)
+
+
+@app.get("/api/projects/<project_id>")
+def api_get_project(project_id):
+    """Get a specific project (for bot API)."""
+    project = knowledge.find_project(store, project_id)
+    if not project:
+        return jsonify(error="No such project."), 404
+    return jsonify(project=project)
+
 
 @app.post("/api/projects")
 def api_create_project():
     body = request.get_json(force=True) or {}
+    
+    # Validate request size
+    if len(json.dumps(body)) > 50000:  # 50KB limit
+        return jsonify(error="Request too large."), 413
+    
     fields = {k: body.get(k) for k in PROJECT_FIELDS}
     
     # Handle structured fields
@@ -468,26 +645,77 @@ def api_create_project():
     if "waiting_on_man" in body and isinstance(body["waiting_on_man"], dict):
         fields["waiting_on_man"] = body["waiting_on_man"]
     
-    project = knowledge.save_project(store, fields, source="you")
+    source = "bot_api" if getattr(request, "is_bot", False) else "you"
+    project = knowledge.save_project(store, fields, source=source)
+    
+    if project and getattr(request, "is_bot", False):
+        # Record bot activity
+        store.save_action(pysecrets.token_hex(10), {
+            "type": "bot_create_project",
+            "status": "done",
+            "actor": request.bot_actor,
+            "project_id": project["id"],
+            "project_name": project.get("name", "")[:200],
+            "created_at": utcnow_iso(),
+            "executed_at": utcnow_iso()
+        })
+    
     return (jsonify(project=project), 200) if project else (jsonify(error="A project needs a name."), 400)
 
 
 @app.patch("/api/projects/<project_id>")
 def api_update_project(project_id):
-    if not store.get_item("projects", project_id):
+    project = knowledge.find_project(store, project_id)
+    if not project:
         return jsonify(error="No such project."), 404
+    
     body = request.get_json(force=True) or {}
-    changes = {k: str(body[k])[:2000] for k in PROJECT_FIELDS if k in body}
     
-    # Handle structured fields
-    if "milestones" in body and isinstance(body["milestones"], list):
-        changes["milestones"] = body["milestones"]
-    if "blockers" in body and isinstance(body["blockers"], list):
-        changes["blockers"] = body["blockers"]
-    if "waiting_on_man" in body and isinstance(body["waiting_on_man"], dict):
-        changes["waiting_on_man"] = body["waiting_on_man"]
+    # Validate request size
+    if len(json.dumps(body)) > 50000:  # 50KB limit
+        return jsonify(error="Request too large."), 413
     
-    return jsonify(project=store.save_item("projects", project_id, {**changes, "updated_at": utcnow_iso()}))
+    is_bot = getattr(request, "is_bot", False)
+    
+    # Bot requests: only allow tracker fields
+    if is_bot:
+        changes = {}
+        for k in PROJECT_FIELDS:
+            if k in body and k in BOT_ALLOWED_PROJECT_FIELDS:
+                changes[k] = str(body[k])[:2000]
+        
+        # Handle structured tracker fields
+        if "milestones" in body and isinstance(body["milestones"], list):
+            changes["milestones"] = body["milestones"]
+        if "blockers" in body and isinstance(body["blockers"], list):
+            changes["blockers"] = body["blockers"]
+        if "waiting_on_man" in body and isinstance(body["waiting_on_man"], dict):
+            changes["waiting_on_man"] = body["waiting_on_man"]
+        
+        # Record bot activity
+        store.save_action(pysecrets.token_hex(10), {
+            "type": "bot_update_project",
+            "status": "done",
+            "actor": request.bot_actor,
+            "project_id": project["id"],
+            "project_name": project.get("name", "")[:200],
+            "fields_changed": list(changes.keys()),
+            "created_at": utcnow_iso(),
+            "executed_at": utcnow_iso()
+        })
+    else:
+        # Regular user: allow all fields
+        changes = {k: str(body[k])[:2000] for k in PROJECT_FIELDS if k in body}
+        
+        # Handle structured fields
+        if "milestones" in body and isinstance(body["milestones"], list):
+            changes["milestones"] = body["milestones"]
+        if "blockers" in body and isinstance(body["blockers"], list):
+            changes["blockers"] = body["blockers"]
+        if "waiting_on_man" in body and isinstance(body["waiting_on_man"], dict):
+            changes["waiting_on_man"] = body["waiting_on_man"]
+    
+    return jsonify(project=store.save_item("projects", project["id"], {**changes, "updated_at": utcnow_iso()}))
 
 
 @app.delete("/api/projects/<project_id>")
