@@ -62,15 +62,15 @@ app.secret_key = store.session_key()
 knowledge.ensure_seeded(store)
 integrations.seed_systems(store)
 
-# One-time seed of tracker workstreams from uploaded JSON
-_tracker_seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "uploads", "tracker_seed_0f81.json")
+# One-time seed of tracker workstreams from tracker_seed.json
+_tracker_seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_seed.json")
 if os.path.exists(_tracker_seed_path):
     try:
         with open(_tracker_seed_path, encoding="utf-8") as f:
             _tracker_seed = json.load(f)
         knowledge.seed_tracker_workstreams(store, _tracker_seed)
-    except Exception:  # noqa: BLE001 - seed is best-effort
-        pass
+    except Exception as exc:  # noqa: BLE001 - seed is best-effort; startup must not fail
+        print(f"Warning: couldn't load tracker seed: {exc}")
 
 app.config.update(
     SESSION_COOKIE_SECURE=not LOCAL,
