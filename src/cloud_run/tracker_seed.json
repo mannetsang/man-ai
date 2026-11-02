@@ -1,0 +1,110 @@
+{
+  "as_of": "2026-11-01T21:30:00-05:00",
+  "timezone": "America/New_York",
+  "workstreams": [
+    {
+      "name": "Fix broken .ca link on /superhair-knowledge (OTTO issue 203340165:links:43)",
+      "owner": "Devon",
+      "status": "On track",
+      "last_update_at": "Oct 29, 10:58 AM EDT",
+      "next_milestone": "Create branch `fix/superhair-knowledge-broken-scalp-link` and commit the `templates/pages/page.html` fix in Dev-SHP/US",
+      "waiting_on_man": "Access fixed as of Nov 1, 7:05 PM EST (mannetsang has push on Dev-SHP/US and Cursor can launch agents on it). Devon needs Man's go-ahead to create the branch and commit."
+    },
+    {
+      "name": "Fill missing OTTO recommendations (13,352 blank suggested_value rows)",
+      "owner": "Mark",
+      "status": "At risk",
+      "last_update_at": "Oct 28, 10:25 PM EDT",
+      "next_milestone": "Completed CSV with generated recommendations",
+      "waiting_on_man": "None. First run was interrupted; Mark resumed it and no completion appears in the transcript."
+    },
+    {
+      "name": "/supplies/ on-page SEO fixes (title, meta, H1/H2, alt text, links, schema)",
+      "owner": "Mark (recs); implementer unknown",
+      "status": "At risk",
+      "last_update_at": "Oct 28, 9:30 PM EDT",
+      "next_milestone": "HTML/metadata diff for /supplies/",
+      "waiting_on_man": "Mark asked whether Devon or Kai should prepare the diff; no answer found."
+    },
+    {
+      "name": "Apple Business Spain alert (blocked login, org deleted) and phishing emails in Re:amaze",
+      "owner": "Elon (proposed)",
+      "status": "At risk",
+      "last_update_at": "Nov 1, 6:57 PM EST",
+      "next_milestone": "Investigation by Elon",
+      "waiting_on_man": "Ari asked twice whether Elon should start here; no answer found. Alert first flagged Oct 28."
+    },
+    {
+      "name": "Read-only security baseline (storefront headers, box secrets storage, Secret Manager inventory)",
+      "owner": "Elon",
+      "status": "On track",
+      "last_update_at": "Nov 1, 6:56 PM EST",
+      "next_milestone": "Severity-ranked findings list",
+      "waiting_on_man": "Should High/Critical findings also go to Ari?"
+    },
+    {
+      "name": "Architecture inventory and review of all repos (mannetsang + Dev-SHP)",
+      "owner": "Nova",
+      "status": "On track",
+      "last_update_at": "Nov 1, 6:58 PM EST",
+      "next_milestone": "Repo summary plus architecture diagram",
+      "waiting_on_man": "Which project to design first (RBC API, Re:amaze tooling, technical SEO, theme consolidation) was not answered."
+    },
+    {
+      "name": "Data access check and 30-day sales, conversion and search baseline",
+      "owner": "Taylor",
+      "status": "On track",
+      "last_update_at": "Nov 1, 7:00 PM EST",
+      "next_milestone": "First 30-day baseline",
+      "waiting_on_man": "Which metrics matter most (open question)."
+    },
+    {
+      "name": "WhatsApp CA + USA customer replies and 15-minute watch routine, posting to Google Chat",
+      "owner": "Vera",
+      "status": "On track",
+      "last_update_at": "Nov 1, 6:53 PM EST",
+      "next_milestone": "Rey consultation Mon Nov 2, 4:00 PM Toronto; Uriel and Orianne reply windows close Mon Nov 2 around 3:10 and 3:33 PM EST",
+      "waiting_on_man": "Standing permission granted Nov 1. Vera still asks Man first on refunds, cancellations, complaints, custom quotes, videos and consultation bookings."
+    },
+    {
+      "name": "Geeta order #268151 WhatsApp thread",
+      "owner": "Vera",
+      "status": "Unknown",
+      "last_update_at": "Nov 1, 6:52 PM EST",
+      "next_milestone": "Reply window closed around 7:00 PM EST Nov 1",
+      "waiting_on_man": "Unknown whether it was answered in time."
+    },
+    {
+      "name": "Re:amaze escalations from Oct 28 snapshot (orders #587150, #586897, density, wrong unit, course, store credit)",
+      "owner": "Vera",
+      "status": "Unknown",
+      "last_update_at": "Oct 28 (time unknown)",
+      "next_milestone": "Unknown",
+      "waiting_on_man": "Ari asked whether Vera should draft replies first or pull Apple alert details; outcome not found."
+    },
+    {
+      "name": "AmazCS Operator Console (Re:amaze sync, AI triage, reply drafts) on Cloud Run",
+      "owner": "Kai",
+      "status": "Done",
+      "last_update_at": "Oct 28, 9:20 PM EDT",
+      "next_milestone": "Next phase unknown",
+      "waiting_on_man": "Man to hard-refresh and confirm clicking into threads works; no confirmation found."
+    },
+    {
+      "name": "OTTO SEO audit export (50,792 issues for www.superhairpieces.com)",
+      "owner": "Mark",
+      "status": "Done",
+      "last_update_at": "Oct 28, 7:03 PM EDT",
+      "next_milestone": "About 64% of issues are redirecting internal links; fix plan not yet chosen",
+      "waiting_on_man": "None found."
+    },
+    {
+      "name": "AI team setup (new bots, renames, roster)",
+      "owner": "Ari",
+      "status": "Done",
+      "last_update_at": "Nov 1, 7:00 PM EST",
+      "next_milestone": "Unknown",
+      "waiting_on_man": "Optional: Man creates sidebar sections himself (no bot tool for it)."
+    }
+  ]
+}

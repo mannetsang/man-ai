@@ -516,6 +516,15 @@ function openTask(t) {
   f.status.value = t ? t.status : "todo";
   f.priority.value = t ? t.priority || "medium" : "medium";
   f.owner_is_me.checked = t ? !!t.owner_is_me : true;
+  
+  // Populate project dropdown
+  const projectSelect = $("taskProject");
+  projectSelect.replaceChildren(
+    el("option", {value: ""}, "None"),
+    ...kb.projects.map(p => el("option", {value: p.id}, p.name))
+  );
+  projectSelect.value = t ? t.project_id || "" : "";
+  
   $("deleteTask").hidden = !t;
   $("workTask").hidden = !t || t.status === "done";
   showTaskReport(t);
@@ -538,7 +547,7 @@ $("taskForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
   const fields = { title: f.title.value, detail: f.detail.value, owner: f.owner.value, due: f.due.value,
-    status: f.status.value, priority: f.priority.value, owner_is_me: f.owner_is_me.checked };
+    status: f.status.value, priority: f.priority.value, owner_is_me: f.owner_is_me.checked, project_id: f.project_id.value };
   try {
     if (editing) await updateTask(editing.id, fields);
     else { const { task } = await api("POST", "/api/tasks", fields); state.tasks.unshift(task); renderFilters(); renderBoard(); }
@@ -561,7 +570,27 @@ for (const id of ["q", "spaceFilter", "ownerFilter", "showDone"]) $(id).addEvent
 function renderProjects() {
   const company = $("companyFilter").value;
   const status = $("projectStatusFilter").value;
-  const items = kb.projects.filter((p) => (!company || p.company === company || p.company === "both") && (!status || p.status === status));
+  const trackerStatus = $("trackerStatusFilter").value;
+  const owner = $("projectOwnerFilter").value;
+  
+  let items = kb.projects.filter((p) => 
+    (!company || p.company === company || p.company === "both") && 
+    (!status || p.status === status) &&
+    (!trackerStatus || p.tracker_status === trackerStatus) &&
+    (!owner || p.owner === owner)
+  );
+  
+  // Populate owner filter
+  const owners = [...new Set(kb.projects.map(p => p.owner).filter(o => o))].sort();
+  const ownerFilter = $("projectOwnerFilter");
+  const currentOwner = ownerFilter.value;
+  ownerFilter.replaceChildren(el("option", {value: ""}, "All owners"), 
+    ...owners.map(o => el("option", {value: o}, o)));
+  ownerFilter.value = owners.includes(currentOwner) ? currentOwner : "";
+  
+  // Render "Waiting on Man" section
+  renderWaitingOnMan();
+  
   $("projectCount").textContent = kb.projects.filter((p) => p.status !== "done").length;
   const openTasks = (pid) => state.tasks.filter((t) => t.project_id === pid && t.status !== "done").length;
   const box = $("projects");
@@ -570,37 +599,200 @@ function renderProjects() {
       : "No projects yet. They appear as the assistant reads your chats and hears your answers."));
     return;
   }
-  box.replaceChildren(...items.map((p) => el("div", { class: "card", tabindex: "0", role: "button",
-      onclick: () => openProject(p), onkeydown: (e) => { if (e.key === "Enter") openProject(p); } },
-    el("div", { class: "title" }, p.name),
-    el("div", { class: "meta" },
-      el("span", { class: `chip ${p.status || ""}` }, p.status || "unknown"),
+  
+  // Check for flags: overdue milestones, stale updates
+  const isStale = (p) => {
+    if (!p.last_update_at) return false;
+    try {
+      const updated = new Date(p.last_update_at);
+      const days = (Date.now() - updated.getTime()) / (1000 * 60 * 60 * 24);
+      return days > 7;
+    } catch { return false; }
+  };
+  
+  const hasOverdueMilestones = (p) => {
+    const milestones = p.milestones || [];
+    const today = todayStr();
+    return milestones.some(m => !m.done && m.due && m.due < today);
+  };
+  
+  box.replaceChildren(...items.map((p) => {
+    const chips = [
+      el("span", { class: `chip ${p.tracker_status === "on_track" ? "active" : p.tracker_status === "blocked" || p.tracker_status === "at_risk" ? "overdue" : ""}` }, 
+        (p.tracker_status || "unknown").replace("_", " ")),
       p.company ? el("span", { class: "chip" }, COMPANY_LABEL[p.company] || p.company) : null,
       p.owner ? el("span", { class: "chip" }, p.owner) : null,
       p.deadline ? el("span", { class: "chip" }, `Due ${p.deadline}`) : null,
       openTasks(p.id) ? el("span", { class: "chip" }, plural(openTasks(p.id), "open task")) : null,
-      (p.spaces || []).length ? el("span", { class: "chip" }, plural(p.spaces.length, "chat")) : null),
-    (p.goal || p.summary) ? el("div", { class: "body" }, p.goal || p.summary) : null,
-    p.next_steps ? el("div", { class: "body" }, `Next: ${p.next_steps}`) : null)));
+      (p.spaces || []).length ? el("span", { class: "chip" }, plural(p.spaces.length, "chat")) : null
+    ].filter(Boolean);
+    
+    // Add warning flags
+    if (hasOverdueMilestones(p)) {
+      chips.push(el("span", { class: "chip overdue", title: "Has overdue milestones" }, "⚠ Overdue"));
+    }
+    if (isStale(p)) {
+      chips.push(el("span", { class: "chip today", title: "No update in >7 days" }, "⚠ Stale"));
+    }
+    if (p.blockers && p.blockers.length > 0) {
+      chips.push(el("span", { class: "chip blocked", title: `${p.blockers.length} blocker(s)` }, `🚫 ${plural(p.blockers.length, "blocker")}`));
+    }
+    
+    return el("div", { class: "card", tabindex: "0", role: "button",
+      onclick: () => openProject(p), onkeydown: (e) => { if (e.key === "Enter") openProject(p); } },
+      el("div", { class: "title" }, p.name),
+      el("div", { class: "meta" }, ...chips),
+      (p.goal || p.summary) ? el("div", { class: "body" }, p.goal || p.summary) : null,
+      p.next_steps ? el("div", { class: "body" }, `Next: ${p.next_steps}`) : null,
+      p.last_update_at ? el("div", { class: "why" }, `Last update: ${p.last_update_at}`) : null
+    );
+  }));
+}
+
+function renderWaitingOnMan() {
+  const waitingProjects = kb.projects.filter(p => 
+    p.waiting_on_man && p.waiting_on_man.needed && p.status !== "done"
+  );
+  
+  const waitingQuestions = kb.questions.filter(q => q.status === "open");
+  const waitingActions = state.actions.filter(a => a.status === "suggested").slice(0, 5);
+  
+  const box = $("waitingOnMan");
+  if (!waitingProjects.length && !waitingQuestions.length && !waitingActions.length) {
+    box.replaceChildren();
+    return;
+  }
+  
+  const items = [];
+  
+  if (waitingProjects.length) {
+    items.push(el("h3", {style: "margin: 0 0 8px"}, `⏸ Waiting on Man (${waitingProjects.length} project(s))`));
+    items.push(...waitingProjects.map(p => el("div", { class: "item" },
+      el("div", { class: "top" }, 
+        el("b", {}, p.name),
+        p.owner ? el("span", { class: "chip" }, p.owner) : null,
+        p.waiting_on_man.since ? el("span", { class: "why" }, `since ${p.waiting_on_man.since}`) : null
+      ),
+      el("div", { class: "reply" }, p.waiting_on_man.needed),
+      el("div", { class: "actions" },
+        el("button", { class: "btn primary", onclick: () => openProject(p) }, "View project")
+      )
+    )));
+  }
+  
+  if (waitingQuestions.length > 0) {
+    items.push(el("h3", {style: "margin: 12px 0 8px"}, `❓ Open questions (${waitingQuestions.length})`));
+    items.push(el("div", {class: "hint"}, `${waitingQuestions.length} question(s) in the Questions tab`));
+  }
+  
+  if (waitingActions.length > 0) {
+    items.push(el("h3", {style: "margin: 12px 0 8px"}, `💬 Pending suggested actions (${waitingActions.length})`));
+    items.push(el("div", {class: "hint"}, `${waitingActions.length} action(s) waiting in the Activity tab`));
+  }
+  
+  box.replaceChildren(el("div", {class: "banner", style: "margin-bottom: 16px"}, ...items));
 }
 
 function openProject(p) {
   editingProject = p || null;
   const f = $("projectForm");
   $("projectDialogTitle").textContent = p ? "Edit project" : "New project";
-  for (const k of ["name", "owner", "deadline", "goal", "summary", "next_steps"]) f[k].value = p ? p[k] || "" : "";
+  for (const k of ["name", "owner", "deadline", "goal", "summary", "next_steps", "last_update_at"]) 
+    f[k].value = p ? p[k] || "" : "";
   f.company.value = p ? p.company || "" : "";
   f.status.value = p ? p.status || "active" : "active";
+  f.tracker_status.value = p ? p.tracker_status || "unknown" : "unknown";
+  
+  // Render milestones
+  const milestones = (p && p.milestones) || [];
+  renderProjectMilestones(milestones);
+  
+  // Render blockers
+  const blockers = (p && p.blockers) || [];
+  renderProjectBlockers(blockers);
+  
+  // Waiting on man
+  const waiting = (p && p.waiting_on_man) || {};
+  f.waiting_needed.value = waiting.needed || "";
+  f.waiting_since.value = waiting.since || "";
+  
   $("deleteProject").hidden = !p;
   $("projectSource").textContent = p && p.source ? `Added from ${p.source} · updated ${ago(p.updated_at)}` : "";
   $("projectDialog").showModal();
 }
 
+let projectMilestones = [];
+let projectBlockers = [];
+
+function renderProjectMilestones(milestones) {
+  projectMilestones = milestones || [];
+  const box = $("projectMilestones");
+  if (!projectMilestones.length) {
+    box.replaceChildren(el("div", {class: "hint", style: "margin: 4px 0"}, "No milestones yet"));
+    return;
+  }
+  box.replaceChildren(...projectMilestones.map((m, i) => el("div", {style: "display: flex; gap: 8px; margin-bottom: 8px; align-items: center"},
+    el("input", {type: "checkbox", checked: m.done, "aria-label": "Done", 
+      onchange: (e) => { projectMilestones[i].done = e.target.checked; renderProjectMilestones(projectMilestones); }}),
+    el("input", {value: m.title, placeholder: "Milestone title", style: "flex: 1", "aria-label": "Title",
+      oninput: (e) => { projectMilestones[i].title = e.target.value; }}),
+    el("input", {type: "date", value: m.due || "", style: "width: 140px", "aria-label": "Due date",
+      oninput: (e) => { projectMilestones[i].due = e.target.value; }}),
+    el("button", {type: "button", class: "btn", style: "padding: 4px 8px", "aria-label": "Remove",
+      onclick: () => { projectMilestones.splice(i, 1); renderProjectMilestones(projectMilestones); }}, "✕")
+  )));
+}
+
+function renderProjectBlockers(blockers) {
+  projectBlockers = blockers || [];
+  const box = $("projectBlockers");
+  if (!projectBlockers.length) {
+    box.replaceChildren(el("div", {class: "hint", style: "margin: 4px 0"}, "No blockers"));
+    return;
+  }
+  box.replaceChildren(...projectBlockers.map((b, i) => el("div", {style: "display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start"},
+    el("textarea", {value: b.what, placeholder: "What's blocking", style: "flex: 1; min-height: 40px", "aria-label": "What's blocking",
+      oninput: (e) => { projectBlockers[i].what = e.target.value; }}),
+    el("input", {value: b.blocked_by || "", placeholder: "Blocked by", style: "width: 140px", "aria-label": "Blocked by",
+      oninput: (e) => { projectBlockers[i].blocked_by = e.target.value; }}),
+    el("input", {value: b.since || "", placeholder: "Since", style: "width: 140px", "aria-label": "Since",
+      oninput: (e) => { projectBlockers[i].since = e.target.value; }}),
+    el("button", {type: "button", class: "btn", style: "padding: 4px 8px; margin-top: 6px", "aria-label": "Remove",
+      onclick: () => { projectBlockers.splice(i, 1); renderProjectBlockers(projectBlockers); }}, "✕")
+  )));
+}
+
+$("addMilestone").onclick = () => {
+  projectMilestones.push({title: "", due: "", done: false});
+  renderProjectMilestones(projectMilestones);
+};
+
+$("addBlocker").onclick = () => {
+  projectBlockers.push({what: "", blocked_by: "", since: ""});
+  renderProjectBlockers(projectBlockers);
+};
+
 $("projectForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
   const fields = {};
-  for (const k of ["name", "company", "status", "owner", "deadline", "goal", "summary", "next_steps"]) fields[k] = f[k].value;
+  for (const k of ["name", "company", "status", "owner", "deadline", "goal", "summary", "next_steps", 
+                    "tracker_status", "last_update_at"]) fields[k] = f[k].value;
+  
+  // Add structured fields
+  fields.milestones = projectMilestones.filter(m => m.title.trim());
+  fields.blockers = projectBlockers.filter(b => b.what.trim());
+  
+  const waiting_needed = f.waiting_needed.value.trim();
+  if (waiting_needed) {
+    fields.waiting_on_man = {
+      needed: waiting_needed,
+      since: f.waiting_since.value.trim() || new Date().toISOString().slice(0, 16).replace('T', ' ')
+    };
+  } else {
+    fields.waiting_on_man = {};
+  }
+  
   try {
     if (editingProject) await api("PATCH", `/api/projects/${encodeURIComponent(editingProject.id)}`, fields);
     else await api("POST", "/api/projects", fields);
@@ -614,7 +806,8 @@ $("deleteProject").onclick = async () => {
   catch (err) { toast(err.message); }
 };
 $("newProject").onclick = () => openProject(null);
-for (const id of ["companyFilter", "projectStatusFilter"]) $(id).addEventListener("input", renderProjects);
+for (const id of ["companyFilter", "projectStatusFilter", "trackerStatusFilter", "projectOwnerFilter"]) 
+  $(id).addEventListener("input", renderProjects);
 
 // -- Questions (the interview) ------------------------------------------------------------
 function renderQuestions() {

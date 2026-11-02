@@ -27,12 +27,15 @@ and avoid shell builtins, pipes, `export` and heredocs.
 ## Layout
 
 - `src/cloud_run/`: the app (Flask on Cloud Run, service `chat-assistant`). Firestore `(default)` database,
-  collections `chat_assistant*`.
+  collections `chat_assistant*`. Includes the cross-team project tracker with milestones, blockers, tracker status, 
+  and a "Waiting on Man" section.
 - `src/browser/`: the browser service (Playwright Chromium, service `web-browser`), callable only by the app.
 - `scripts/gchat.py`: Google Chat from a Claude Code session, with Manne's stored sign-in; never sends without
   `--confirm`.
 - `setup.sh`: one-time setup by a project Owner (service account, secrets, hourly job).
-- `tests/`: `python -m unittest discover -s tests` runs everything offline (in-memory store, fakes).
+- `tests/`: `python -m unittest discover -s tests` runs everything offline (in-memory store, fakes). New tracker 
+  tests are in `tests/test_tracker.py`.
+- `uploads/tracker_seed_0f81.json`: one-time seed data for 13 AI team workstreams, loaded idempotently on startup.
 
 ## Deploy
 

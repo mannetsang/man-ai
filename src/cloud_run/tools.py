@@ -52,6 +52,15 @@ _PROJECT_FIELDS = {
     "name": _S, "company": {"type": "string", "enum": ["superhairpieces", "gencbeauty", "both"]},
     "goal": _S, "owner": _S, "status": {"type": "string", "enum": ["active", "paused", "blocked", "done", "unknown"]},
     "deadline": {**_S, "description": "YYYY-MM-DD or empty"}, "summary": _S, "next_steps": _S,
+    "tracker_status": {"type": "string", "enum": ["on_track", "at_risk", "blocked", "done", "unknown"],
+                       "description": "Overall health: on_track, at_risk, blocked, done, unknown"},
+    "last_update_at": {**_S, "description": "Free-text timestamp of last update (e.g. 'Nov 1, 3:00 PM EST')"},
+    "milestones": {"type": "array", "items": {"type": "object", "properties": {
+        "title": _S, "due": {**_S, "description": "YYYY-MM-DD or empty"}, "done": _B}}},
+    "blockers": {"type": "array", "items": {"type": "object", "properties": {
+        "what": _S, "blocked_by": _S, "since": _S}}},
+    "waiting_on_man": {"type": "object", "properties": {"needed": _S, "since": _S},
+                       "description": "What's needed from Man and since when"},
 }
 
 SPECS = [
@@ -63,6 +72,18 @@ SPECS = [
      _obj({"status": _S, "company": _S})),
     ("save_project", "Create a project or update one (by project_id or exact name). Only send fields you know.",
      _obj(_PROJECT_FIELDS, ["name"])),
+    ("update_project_tracker", "Update tracker fields on an existing project: set tracker_status, add/complete "
+     "milestones, add/clear blockers, set/clear waiting-on-Man, bump last_update_at timestamp.",
+     _obj({"project_id": _S,
+           "tracker_status": {"type": "string", "enum": ["on_track", "at_risk", "blocked", "done", "unknown"]},
+           "add_milestone": {"type": "object", "properties": {"title": _S, "due": _S}},
+           "complete_milestone": {**_S, "description": "Milestone title to mark as done"},
+           "add_blocker": {"type": "object", "properties": {"what": _S, "blocked_by": _S, "since": _S}},
+           "clear_blocker": {**_S, "description": "Blocker 'what' text to remove"},
+           "set_waiting_on_man": {"type": "object", "properties": {"needed": _S, "since": _S}},
+           "clear_waiting_on_man": {**_B, "description": "True to clear waiting-on-Man flag"},
+           "update_last_update": {**_B, "description": "Bump last_update_at timestamp (default true)"}},
+          ["project_id"])),
     ("record_fact", "Store something learned about the company, a project, a person, a system or a process.",
      _obj({"text": _S, "topic": {"type": "string", "enum": ["company", "project", "person", "system", "process",
                                                             "policy", "goal", "general"]},
@@ -222,11 +243,86 @@ class Toolset:
         items = [p for p in self.store.list_items("projects")
                  if (not status or p.get("status") == status) and (not company or p.get("company") in (company, "both"))]
         return {"projects": [{k: p.get(k) for k in ("id", "name", "company", "status", "owner", "deadline", "goal",
-                                                      "summary", "next_steps")} for p in items]}
+                                                      "summary", "next_steps", "tracker_status", "last_update_at",
+                                                      "milestones", "blockers", "waiting_on_man")} for p in items]}
 
     def _t_save_project(self, **fields):
+        """Save or update a project. Accepts tracker fields: tracker_status, milestones, blockers, waiting_on_man, last_update_at."""
         project = knowledge.save_project(self.store, fields, source=f"{self.caller} conversation")
         return {"project": project} if project else {"error": "a new project needs a name"}
+    
+    def _t_update_project_tracker(self, project_id, tracker_status=None, add_milestone=None, complete_milestone=None,
+                                   add_blocker=None, clear_blocker=None, set_waiting_on_man=None, clear_waiting_on_man=False,
+                                   update_last_update=True):
+        """Update tracker fields on an existing project.
+        
+        Args:
+            project_id: Project ID to update
+            tracker_status: Set overall status (on_track/at_risk/blocked/done/unknown)
+            add_milestone: Dict with {title, due} to add a new milestone
+            complete_milestone: Milestone title to mark as done
+            add_blocker: Dict with {what, blocked_by, since} to add a blocker
+            clear_blocker: Blocker 'what' text to remove
+            set_waiting_on_man: Dict with {needed, since} to flag waiting on Man
+            clear_waiting_on_man: True to clear waiting-on-Man flag
+            update_last_update: Whether to bump last_update_at timestamp (default True)
+        """
+        project = self.store.get_item("projects", project_id)
+        if not project:
+            return {"error": "no such project"}
+        
+        changes = {}
+        
+        if tracker_status and tracker_status in ("on_track", "at_risk", "blocked", "done", "unknown"):
+            changes["tracker_status"] = tracker_status
+        
+        milestones = list(project.get("milestones") or [])
+        if add_milestone and isinstance(add_milestone, dict) and add_milestone.get("title"):
+            milestones.append({
+                "title": str(add_milestone["title"])[:200],
+                "due": str(add_milestone.get("due", ""))[:10],
+                "done": False
+            })
+            changes["milestones"] = milestones
+        
+        if complete_milestone:
+            for m in milestones:
+                if m.get("title") == complete_milestone:
+                    m["done"] = True
+            changes["milestones"] = milestones
+        
+        blockers = list(project.get("blockers") or [])
+        if add_blocker and isinstance(add_blocker, dict) and add_blocker.get("what"):
+            blockers.append({
+                "what": str(add_blocker["what"])[:500],
+                "blocked_by": str(add_blocker.get("blocked_by", ""))[:100],
+                "since": str(add_blocker.get("since", ""))[:30]
+            })
+            changes["blockers"] = blockers
+        
+        if clear_blocker:
+            blockers = [b for b in blockers if b.get("what") != clear_blocker]
+            changes["blockers"] = blockers
+        
+        if set_waiting_on_man and isinstance(set_waiting_on_man, dict) and set_waiting_on_man.get("needed"):
+            changes["waiting_on_man"] = {
+                "needed": str(set_waiting_on_man["needed"])[:500],
+                "since": str(set_waiting_on_man.get("since", ""))[:30]
+            }
+        
+        if clear_waiting_on_man:
+            changes["waiting_on_man"] = {}
+        
+        if update_last_update:
+            from datetime import datetime, timezone
+            changes["last_update_at"] = datetime.now(timezone.utc).strftime("%b %d, %I:%M %p %Z")
+        
+        if changes:
+            changes["updated_at"] = utcnow_iso()
+            updated = self.store.save_item("projects", project_id, changes)
+            return {"updated": True, "project": updated}
+        
+        return {"updated": False, "message": "no changes specified"}
 
     def _t_record_fact(self, text, topic="general", project_id=""):
         fact = knowledge.add_fact(self.store, text, topic, project_id, source=f"{self.caller} conversation")
