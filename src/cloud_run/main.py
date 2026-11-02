@@ -496,6 +496,103 @@ def api_delete_project(project_id):
     return jsonify(ok=True)
 
 
+@app.post("/api/projects/<project_id>/answer")
+def api_answer_waiting_on_man(project_id):
+    """Man answers a 'waiting on Man' item directly in the Projects tab."""
+    project = knowledge.find_project(store, project_id)
+    if not project:
+        return jsonify(error="No such project."), 404
+    
+    body = request.get_json(force=True) or {}
+    answer_text = (body.get("text") or "").strip()
+    if not answer_text:
+        return jsonify(error="Answer text is required."), 400
+    
+    answer_text = answer_text[:4000]
+    keep_waiting = bool(body.get("keep_waiting", False))
+    now = utcnow_iso()
+    
+    # Get current waiting_on_man for the question field
+    waiting = project.get("waiting_on_man") or {}
+    question = waiting.get("needed", "")
+    
+    # Append to man_answers list
+    man_answers = list(project.get("man_answers") or [])
+    man_answers.append({
+        "text": answer_text,
+        "answered_at": now,
+        "question": question[:500]
+    })
+    
+    changes = {
+        "man_answers": man_answers,
+        "updated_at": now
+    }
+    
+    # Update last_update_at timestamp
+    from datetime import datetime, timezone
+    changes["last_update_at"] = datetime.now(timezone.utc).strftime("%b %d, %I:%M %p %Z")
+    
+    # Clear waiting_on_man unless keep_waiting is set
+    if not keep_waiting:
+        changes["waiting_on_man"] = {}
+    
+    updated = store.save_item("projects", project["id"], changes)
+    
+    # Record activity entry
+    action_id = pysecrets.token_hex(10)
+    store.save_action(action_id, {
+        "type": "man_answer",
+        "status": "done",
+        "project_id": project["id"],
+        "project_name": project.get("name", "")[:200],
+        "answer_text": answer_text[:300],
+        "question": question[:300],
+        "keep_waiting": keep_waiting,
+        "created_at": now,
+        "executed_at": now
+    })
+    
+    return jsonify(project=updated)
+
+
+@app.get("/api/projects/answers")
+def api_get_recent_answers():
+    """Get recent Man answers across all projects, for external bots."""
+    since = request.args.get("since", "")
+    if since:
+        try:
+            from datetime import datetime
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return jsonify(error="Invalid 'since' parameter (expected ISO 8601)."), 400
+    else:
+        since_dt = None
+    
+    results = []
+    for project in store.list_items("projects"):
+        for answer in (project.get("man_answers") or []):
+            if since_dt:
+                try:
+                    answered_dt = datetime.fromisoformat(answer.get("answered_at", "").replace("Z", "+00:00"))
+                    if answered_dt <= since_dt:
+                        continue
+                except (ValueError, AttributeError):
+                    continue
+            
+            results.append({
+                "project_id": project["id"],
+                "project_name": project.get("name", ""),
+                "question": answer.get("question", ""),
+                "answer": answer.get("text", ""),
+                "answered_at": answer.get("answered_at", "")
+            })
+    
+    # Sort newest first
+    results.sort(key=lambda x: x.get("answered_at", ""), reverse=True)
+    return jsonify(answers=results[:100])  # Cap at 100
+
+
 @app.patch("/api/systems/<system_id>")
 def api_update_system(system_id):
     if not store.get_item("systems", system_id):
