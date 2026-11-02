@@ -667,17 +667,52 @@ function renderWaitingOnMan() {
   
   if (waitingProjects.length) {
     items.push(el("h3", {style: "margin: 0 0 8px"}, `⏸ Waiting on Man (${waitingProjects.length} project(s))`));
-    items.push(...waitingProjects.map(p => el("div", { class: "item" },
-      el("div", { class: "top" }, 
-        el("b", {}, p.name),
-        p.owner ? el("span", { class: "chip" }, p.owner) : null,
-        p.waiting_on_man.since ? el("span", { class: "why" }, `since ${p.waiting_on_man.since}`) : null
-      ),
-      el("div", { class: "reply" }, p.waiting_on_man.needed),
-      el("div", { class: "actions" },
-        el("button", { class: "btn primary", onclick: () => openProject(p) }, "View project")
-      )
-    )));
+    items.push(...waitingProjects.map(p => {
+      const answerBox = el("textarea", {
+        placeholder: "Your answer...",
+        style: "width: 100%; min-height: 60px; margin-top: 8px",
+        "aria-label": "Answer"
+      });
+      const keepCheckbox = el("input", {type: "checkbox", id: `keep-${p.id}`});
+      const answerBtn = el("button", {class: "btn primary"}, "Send answer");
+      
+      answerBtn.onclick = async () => {
+        const text = answerBox.value.trim();
+        if (!text) { toast("Type an answer first."); return; }
+        answerBtn.disabled = true;
+        answerBtn.textContent = "Sending...";
+        try {
+          await api("POST", `/api/projects/${encodeURIComponent(p.id)}/answer`, {
+            text,
+            keep_waiting: keepCheckbox.checked
+          });
+          toast("Answer sent");
+          await refreshKnowledge();
+        } catch (e) {
+          toast(e.message);
+          answerBtn.disabled = false;
+          answerBtn.textContent = "Send answer";
+        }
+      };
+      
+      return el("div", {class: "item"},
+        el("div", {class: "top"}, 
+          el("b", {}, p.name),
+          p.owner ? el("span", {class: "chip"}, p.owner) : null,
+          p.waiting_on_man.since ? el("span", {class: "why"}, `since ${p.waiting_on_man.since}`) : null
+        ),
+        el("div", {class: "reply"}, p.waiting_on_man.needed),
+        answerBox,
+        el("div", {class: "actions"},
+          answerBtn,
+          el("label", {class: "check", style: "margin-left: 12px"},
+            keepCheckbox,
+            " Keep waiting (for partial answers)"
+          ),
+          el("button", {class: "btn", onclick: () => openProject(p)}, "View project")
+        )
+      );
+    }));
   }
   
   if (waitingQuestions.length > 0) {
@@ -715,6 +750,20 @@ function openProject(p) {
   const waiting = (p && p.waiting_on_man) || {};
   f.waiting_needed.value = waiting.needed || "";
   f.waiting_since.value = waiting.since || "";
+  
+  // Render previous answers
+  const answers = (p && p.man_answers) || [];
+  const answersBox = $("projectAnswers");
+  if (answers.length > 0) {
+    const sorted = [...answers].sort((a, b) => (b.answered_at || "").localeCompare(a.answered_at || ""));
+    answersBox.replaceChildren(...sorted.map(a => el("div", {style: "margin-bottom: 12px; padding: 8px; background: #f9f9f9; border-radius: 4px"},
+      el("div", {style: "font-weight: bold; margin-bottom: 4px"}, `Question: ${a.question || "(no question)"}`),
+      el("div", {style: "margin-bottom: 4px"}, a.text || ""),
+      el("div", {class: "why"}, `Answered ${ago(a.answered_at)}`)
+    )));
+  } else {
+    answersBox.replaceChildren(el("div", {class: "hint"}, "No previous answers."));
+  }
   
   $("deleteProject").hidden = !p;
   $("projectSource").textContent = p && p.source ? `Added from ${p.source} · updated ${ago(p.updated_at)}` : "";

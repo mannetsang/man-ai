@@ -284,7 +284,7 @@ def save_project(store, fields, source=""):
     return store.save_item("projects", pid, {"company": "", "goal": "", "owner": "", "status": "active", "deadline": "",
                                              "summary": "", "next_steps": "", "spaces": [], 
                                              "milestones": [], "blockers": [], "waiting_on_man": {}, 
-                                             "tracker_status": "unknown", "last_update_at": "",
+                                             "tracker_status": "unknown", "last_update_at": "", "man_answers": [],
                                              **clean, "source": source[:120], "created_at": now, "updated_at": now})
 
 
@@ -309,6 +309,17 @@ def brief(store, settings=None, facts_limit=60, compact=False):
     lines += [f"- {f.get('text')}" + (f" (project {f['project_id']})" if f.get("project_id") else "") for f in facts]
     if not facts:
         lines.append("- nothing yet")
+
+    # Include recent man_answers
+    recent_answers = []
+    for p in projects:
+        for a in (p.get("man_answers") or [])[-3:]:  # Last 3 answers per project
+            recent_answers.append((a.get("answered_at", ""), p.get("name"), a.get("question"), a.get("text")))
+    recent_answers.sort(key=lambda x: x[0], reverse=True)
+    if recent_answers[:10]:
+        lines.append(f"\nRECENT ANSWERS FROM MAN ({len(recent_answers[:10])})")
+        for answered_at, proj_name, question, text in recent_answers[:10]:
+            lines.append(f"- [{proj_name}] Q: {question[:60]} → A: {text[:100]}")
 
     questions = sorted((q for q in store.list_items("questions") if q.get("status") == "open"),
                        key=lambda q: (q.get("priority", 2), q.get("created_at", "")))

@@ -244,7 +244,7 @@ class Toolset:
                  if (not status or p.get("status") == status) and (not company or p.get("company") in (company, "both"))]
         return {"projects": [{k: p.get(k) for k in ("id", "name", "company", "status", "owner", "deadline", "goal",
                                                       "summary", "next_steps", "tracker_status", "last_update_at",
-                                                      "milestones", "blockers", "waiting_on_man")} for p in items]}
+                                                      "milestones", "blockers", "waiting_on_man", "man_answers")} for p in items]}
 
     def _t_save_project(self, **fields):
         """Save or update a project. Accepts tracker fields: tracker_status, milestones, blockers, waiting_on_man, last_update_at."""
