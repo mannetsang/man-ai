@@ -4,9 +4,9 @@ The sign-in (Secret Manager: chat-assistant-user-token) is read inside this proc
 Nothing is sent without --confirm: run without it first to show the exact message, and add --confirm
 only after Manne has approved that text.
 
-  python chat-assistant/scripts/gchat.py list [--query TEXT]
-  python chat-assistant/scripts/gchat.py send --to sydney@superhairpieces.com --text "..." [--confirm]
-  python chat-assistant/scripts/gchat.py send --space "Space name or spaces/ID" --text "..." [--confirm]
+  python scripts/gchat.py list [--query TEXT]
+  python scripts/gchat.py send --to sydney@superhairpieces.com --text "..." [--confirm]
+  python scripts/gchat.py send --space "Space name or spaces/ID" --text "..." [--confirm]
 
 --to works when Manne already has a direct message with that person. Starting a new one needs the
 chat.spaces.create permission, which the sign-in doesn't have.
@@ -16,8 +16,8 @@ import argparse
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path[:0] = [ROOT, os.path.join(ROOT, "chat-assistant", "src", "cloud_run")]
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "src", "cloud_run"))
 
 from google_apis import CHAT, GoogleApiError, GoogleClient, credentials_from_json  # noqa: E402
 
@@ -31,9 +31,13 @@ class Stop(Exception):
 
 
 def make_client():
-    from lib.secrets import get_secret
+    """Manne's Google sign-in, read from Secret Manager (GCP_PROJECT) with your Application Default Credentials."""
+    from store import SecretManagerSecrets
 
-    return GoogleClient(credentials_from_json(get_secret(TOKEN_SECRET)))
+    token = SecretManagerSecrets().get(TOKEN_SECRET)
+    if not token:
+        raise Stop(f"can't read the {TOKEN_SECRET} secret: sign in to Man AI and press Connect, or check your access")
+    return GoogleClient(credentials_from_json(token))
 
 
 def find_space(google, to=None, space=None):

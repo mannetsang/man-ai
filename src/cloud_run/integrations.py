@@ -375,7 +375,7 @@ GOOGLE.append(Integration(
     id="merchant_center", label="Google Merchant Center", secrets=[], base="https://merchantapi.googleapis.com",
     kind="google", read_posts=(r"^/reports/v1/accounts/\d+/reports:search$",),
     hint=("Accounts: 5298296396 Superhairpieces.ca (registered for API use), 289630622 Superhairpieces .com/EU, "
-          "670525760 Gen'C Beauty (these two need the project registered first: google-merchant/register_developer.py). "
+          "670525760 Gen'C Beauty (these two need the project registered first: register_developer.py in mannetsang/trustpilot-ai-pipeline's google-merchant/). "
           "/products/v1/accounts/{id}/products?pageSize=50 (with approval status per country), "
           "/accounts/v1/accounts/{id}, POST /reports/v1/accounts/{id}/reports:search (a read) with "
           "{\"query\": \"SELECT offer_id, title, clicks, impressions FROM product_performance_view WHERE date "

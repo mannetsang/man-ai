@@ -22,7 +22,7 @@ Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.
 ### Google Merchant Center
 
 Driven through the **Merchant API** (`merchantapi.googleapis.com`, enabled on
-the project) by the scripts in `google-merchant/`. Auth is Application Default
+the project) by the scripts in `google-merchant/` of mannetsang/trustpilot-ai-pipeline. Auth is Application Default
 Credentials, so the calling service account must be an Admin user on the
 Merchant Center account and the project must be registered once with
 `register_developer.py`. Account IDs are not secrets:

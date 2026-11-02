@@ -1,0 +1,48 @@
+name: Deploy Man AI to Cloud Run
+
+# Builds and deploys Man AI (Cloud Run service chat-assistant). Runs on push to main when the app changes, or by
+# hand. The browser service (src/browser) is deployed by hand: redeploying it closes every open browser tab.
+#
+# Prerequisites, once: a project Owner runs setup.sh in Cloud Shell (service account, secrets, hourly job), and the
+# Workload Identity pool lets this repository (mannetsang/man-ai) act as claude-sessions@ (see CLAUDE.md).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/cloud_run/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+# Keyless Google Cloud auth (Workload Identity Federation).
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        # --update-env-vars, not --set-env-vars: the service's other settings (BROWSER_URL) stay as they are.
+        run: |
+          gcloud run deploy chat-assistant \
+            --source ./src/cloud_run \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --service-account chat-assistant@shp-ai-bot-2026.iam.gserviceaccount.com \
+            --allow-unauthenticated \
+            --timeout 3600 --memory 1Gi --max-instances 3 \
+            --update-env-vars "OWNER_EMAIL=manne@superhairpieces.com,GCP_PROJECT=shp-ai-bot-2026" \
+            --quiet
+          URL=$(gcloud run services describe chat-assistant --region us-central1 --project shp-ai-bot-2026 --format 'value(status.url)')
+          echo "### Man AI deployed: $URL" >> "$GITHUB_STEP_SUMMARY"
