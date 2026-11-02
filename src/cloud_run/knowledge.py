@@ -137,63 +137,79 @@ def seed_tracker_workstreams(store, tracker_data):
         return 0
     
     count = 0
+    failures = []
     now = utcnow_iso()
-    for ws in tracker_data.get("workstreams", []):
-        name = ws.get("name", "").strip()
-        if not name:
-            continue
-        
-        # Check if a project with this exact name already exists
-        if find_project(store, name):
-            continue
-        
-        # Parse tracker status
-        status_map = {
-            "On track": "on_track",
-            "At risk": "at_risk",
-            "Blocked": "blocked",
-            "Done": "done",
-            "Unknown": "unknown"
-        }
-        tracker_status = status_map.get(ws.get("status"), "unknown")
-        
-        # Build waiting_on_man structure
-        waiting_on_man = {}
-        waiting_text = ws.get("waiting_on_man", "")
-        if waiting_text and not waiting_text.startswith("None"):
-            waiting_on_man = {"needed": waiting_text[:500], "since": ws.get("last_update_at", now)}
-        
-        # Extract milestone from next_milestone if present
-        milestones = []
-        if ws.get("next_milestone"):
-            milestones.append({
-                "title": ws["next_milestone"][:200],
-                "due": "",
-                "done": False
-            })
-        
-        project = {
-            "name": name,
-            "owner": ws.get("owner", "")[:100],
-            "status": "active" if tracker_status not in ("done",) else "done",
-            "tracker_status": tracker_status,
-            "summary": "",
-            "next_steps": ws.get("next_milestone", "")[:2000],
-            "milestones": milestones,
-            "blockers": [],
-            "waiting_on_man": waiting_on_man,
-            "last_update_at": ws.get("last_update_at", "")[:30],
-            "company": "superhairpieces",
-            "goal": "",
-            "deadline": "",
-            "spaces": []
-        }
-        
-        saved = save_project(store, project, source="tracker_seed")
-        if saved:
-            count += 1
     
+    for idx, ws in enumerate(tracker_data.get("workstreams", [])):
+        try:
+            name = ws.get("name", "").strip()
+            if not name:
+                failures.append(f"Item {idx}: missing name")
+                continue
+            
+            # Check if a project with this exact name already exists
+            if find_project(store, name):
+                continue
+            
+            # Parse tracker status
+            status_map = {
+                "On track": "on_track",
+                "At risk": "at_risk",
+                "Blocked": "blocked",
+                "Done": "done",
+                "Unknown": "unknown"
+            }
+            tracker_status = status_map.get(ws.get("status"), "unknown")
+            
+            # Build waiting_on_man structure
+            waiting_on_man = {}
+            waiting_text = ws.get("waiting_on_man", "")
+            if waiting_text and not waiting_text.startswith("None"):
+                waiting_on_man = {"needed": waiting_text[:500], "since": ws.get("last_update_at", now)}
+            
+            # Extract milestone from next_milestone if present
+            milestones = []
+            if ws.get("next_milestone"):
+                milestones.append({
+                    "title": ws["next_milestone"][:200],
+                    "due": "",
+                    "done": False
+                })
+            
+            project = {
+                "name": name,
+                "owner": ws.get("owner", "")[:100],
+                "status": "active" if tracker_status not in ("done",) else "done",
+                "tracker_status": tracker_status,
+                "summary": "",
+                "next_steps": ws.get("next_milestone", "")[:2000],
+                "milestones": milestones,
+                "blockers": [],
+                "waiting_on_man": waiting_on_man,
+                "last_update_at": ws.get("last_update_at", "")[:30],
+                "company": "superhairpieces",
+                "goal": "",
+                "deadline": "",
+                "spaces": []
+            }
+            
+            saved = save_project(store, project, source="tracker_seed")
+            if saved:
+                count += 1
+            else:
+                failures.append(f"Item {idx} ({name[:40]}...): save_project returned None")
+        except Exception as exc:  # noqa: BLE001 - log and continue with other items
+            name_preview = ws.get("name", "unknown")[:40] if isinstance(ws.get("name"), str) else "unknown"
+            failures.append(f"Item {idx} ({name_preview}...): {type(exc).__name__}: {str(exc)[:100]}")
+    
+    # Always set the flag after processing all items, even if some failed
     store.set_flag("tracker_seeded", now)
+    
+    if failures:
+        print(f"Tracker seed: {count} succeeded, {len(failures)} failed:")
+        for failure in failures:
+            print(f"  - {failure}")
+    
     return count
 
 
@@ -225,11 +241,15 @@ def add_question(store, question, why="", project_id="", priority=2, source=""):
 
 
 def find_project(store, name_or_id):
+    """Find a project by ID or exact name. Never uses raw names as doc IDs."""
     if not name_or_id:
         return None
-    item = store.get_item("projects", name_or_id)
-    if item:
-        return item
+    # Try as a document ID first (if it looks like a slug/ID, not a name with slashes or spaces)
+    if name_or_id and "/" not in name_or_id and " " not in name_or_id:
+        item = store.get_item("projects", name_or_id)
+        if item:
+            return item
+    # Fall back to name matching across all projects
     wanted = name_or_id.strip().lower()
     for p in store.list_items("projects"):
         if p.get("name", "").strip().lower() == wanted:
